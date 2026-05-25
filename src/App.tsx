@@ -1,55 +1,32 @@
-import {
-  Activity,
-  BarChart3,
-  BookOpenText,
-  RefreshCcw,
-  Save,
-  ShieldCheck,
-  Sparkles,
-  Star,
-  Target,
-  Trophy,
-} from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Moon, RefreshCcw, Sun } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BrawlerPerformance } from "./components/BrawlerPerformance";
+import { ModeMapPerformance } from "./components/ModeMapPerformance";
+import { Overview } from "./components/Overview";
+import { RecentBattles } from "./components/RecentBattles";
+import { UpgradeRecommendations } from "./components/UpgradeRecommendations";
 import { analyzePlayer, saveBattleNote, syncBattles } from "./lib/api";
-import type {
-  BrawlerMetric,
-  ManualNote,
-  PlayerAnalysis,
-  SavedBattle,
-  UpgradeRecommendation,
-} from "./lib/types";
-
-const MANUAL_TAGS = [
-  "bad draft",
-  "carried",
-  "countered",
-  "felt controlled",
-  "tilted",
-  "teammates weak",
-];
+import type { ManualNote, PlayerAnalysis, SavedBattle } from "./lib/types";
 
 const DEFAULT_PLAYER_TAG = "GQ0GRPCVQ";
+const THEME_STORAGE_KEY = "brawl-stars-coach-theme";
 
-function formatPercent(value = 0) {
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
+type Theme = "light" | "dark";
 
 function normalizeTagInput(tag: string) {
   const trimmed = (tag.trim() || DEFAULT_PLAYER_TAG).toUpperCase();
-  if (!trimmed) return "";
   return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
+
+function getInitialTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") return stored;
+
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 export default function App() {
@@ -60,44 +37,17 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, ManualNote>>({});
+  const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
+  const syncInFlightRef = useRef(false);
 
   const normalizedTag = useMemo(() => normalizeTagInput(playerTag), [playerTag]);
 
-  async function fetchAndSync() {
-    if (!normalizedTag) {
-      setError("Enter a Brawl Stars player tag, like #2PP or #ABC123.");
-      return;
-    }
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
-    setIsSyncing(true);
-    setError(null);
-    setStatus("Syncing official battle log and refreshing analysis...");
-
-    try {
-      const result = await syncBattles(normalizedTag);
-      setAnalysis(result.analysis);
-      setStatus(
-        `Fetched ${result.fetchedCount} battles. Saved ${result.savedCount} new battle${
-          result.savedCount === 1 ? "" : "s"
-        }.`,
-      );
-      hydrateNotes(result.analysis.battles);
-    } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : "Sync failed.");
-      try {
-        const existing = await analyzePlayer(normalizedTag);
-        setAnalysis(existing);
-        hydrateNotes(existing.battles);
-        setStatus("Showing saved analysis from Supabase.");
-      } catch {
-        setStatus("No saved analysis loaded.");
-      }
-    } finally {
-      setIsSyncing(false);
-    }
-  }
-
-  function hydrateNotes(battles: SavedBattle[]) {
+  const hydrateNotes = useCallback((battles: SavedBattle[]) => {
     setNoteDrafts((current) => {
       const next = { ...current };
       battles.forEach((battle) => {
@@ -107,33 +57,78 @@ export default function App() {
       });
       return next;
     });
-  }
+  }, []);
 
-  async function persistNote(battle: SavedBattle) {
-    if (!battle.id) return;
-    const draft = noteDrafts[battle.id] ?? { tags: [], note: "" };
-    try {
-      await saveBattleNote(battle.id, normalizedTag, draft);
-      setStatus("Manual notes saved.");
-      setAnalysis((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          battles: current.battles.map((item) =>
-            item.id === battle.id ? { ...item, note: draft } : item,
-          ),
-        };
-      });
-    } catch (noteError) {
-      setError(
-        noteError instanceof Error
-          ? noteError.message
-          : "Could not save match notes.",
-      );
-    }
-  }
+  const fetchAndSync = useCallback(
+    async (source: "manual" | "auto" = "manual") => {
+      if (syncInFlightRef.current) {
+        if (source === "manual") {
+          setStatus("A sync is already running. Finishing that one first.");
+        }
+        return;
+      }
 
-  function toggleBattleTag(battleId: string, tag: string) {
+      syncInFlightRef.current = true;
+      setIsSyncing(true);
+      setError(null);
+      setStatus("Syncing official battle log and refreshing analysis...");
+
+      try {
+        const result = await syncBattles(normalizedTag);
+        setAnalysis(result.analysis);
+        setStatus(
+          `Fetched ${result.fetchedCount} battles. Saved ${result.savedCount} new battle${
+            result.savedCount === 1 ? "" : "s"
+          }.`,
+        );
+        hydrateNotes(result.analysis.battles);
+      } catch (syncError) {
+        setError(syncError instanceof Error ? syncError.message : "Sync failed.");
+        try {
+          const existing = await analyzePlayer(normalizedTag);
+          setAnalysis(existing);
+          hydrateNotes(existing.battles);
+          setStatus("Showing saved analysis from Supabase.");
+        } catch {
+          setStatus("No saved analysis loaded.");
+        }
+      } finally {
+        syncInFlightRef.current = false;
+        setIsSyncing(false);
+      }
+    },
+    [hydrateNotes, normalizedTag],
+  );
+
+  const persistNote = useCallback(
+    async (battle: SavedBattle) => {
+      if (!battle.id) return;
+      const draft = noteDrafts[battle.id] ?? { tags: [], note: "" };
+
+      try {
+        await saveBattleNote(battle.id, normalizedTag, draft);
+        setStatus("Manual notes saved.");
+        setAnalysis((current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            battles: current.battles.map((item) =>
+              item.id === battle.id ? { ...item, note: draft } : item,
+            ),
+          };
+        });
+      } catch (noteError) {
+        setError(
+          noteError instanceof Error
+            ? noteError.message
+            : "Could not save match notes.",
+        );
+      }
+    },
+    [normalizedTag, noteDrafts],
+  );
+
+  const toggleBattleTag = useCallback((battleId: string, tag: string) => {
     setNoteDrafts((current) => {
       const existing = current[battleId] ?? { tags: [], note: "" };
       const tags = existing.tags.includes(tag)
@@ -141,17 +136,17 @@ export default function App() {
         : [...existing.tags, tag];
       return { ...current, [battleId]: { ...existing, tags } };
     });
-  }
+  }, []);
 
   useEffect(() => {
-    if (!autoSave || !normalizedTag) return undefined;
+    if (!autoSave) return undefined;
 
     const id = window.setInterval(() => {
-      void fetchAndSync();
+      void fetchAndSync("auto");
     }, 5 * 60 * 1000);
 
     return () => window.clearInterval(id);
-  }, [autoSave, normalizedTag]);
+  }, [autoSave, fetchAndSync]);
 
   return (
     <main className="app-shell">
@@ -172,11 +167,20 @@ export default function App() {
           </label>
           <button
             className="primary-button"
-            onClick={fetchAndSync}
+            onClick={() => void fetchAndSync("manual")}
             disabled={isSyncing}
           >
             <RefreshCcw size={18} />
             {isSyncing ? "Syncing..." : "Fetch Latest Battles"}
+          </button>
+          <button
+            className="theme-button"
+            type="button"
+            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            {theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
           <label className="toggle-row">
             <input
@@ -215,282 +219,4 @@ export default function App() {
       />
     </main>
   );
-}
-
-function Overview({ analysis }: { analysis: PlayerAnalysis | null }) {
-  const player = analysis?.player;
-  const totals = analysis?.totals;
-
-  return (
-    <article className="panel overview-panel">
-      <div className="section-heading">
-        <Trophy size={20} />
-        <h2>Player overview</h2>
-      </div>
-      <div className="player-name">{player?.name ?? "No player loaded"}</div>
-      <p className="muted">{player?.tag ?? "Sync a tag to build a saved battle history."}</p>
-      <div className="metric-grid">
-        <Metric label="Saved battles" value={totals?.battles ?? 0} />
-        <Metric label="Win rate" value={totals ? formatPercent(totals.winRate) : "0%"} />
-        <Metric
-          label="Star player"
-          value={totals ? formatPercent(totals.starPlayerRate) : "0%"}
-        />
-        <Metric
-          label="Versatility"
-          value={totals ? Math.round(totals.versatilityScore) : 0}
-        />
-      </div>
-    </article>
-  );
-}
-
-function UpgradeRecommendations({
-  recommendations,
-}: {
-  recommendations: UpgradeRecommendation[];
-}) {
-  return (
-    <article className="panel recommendations-panel">
-      <div className="section-heading">
-        <Sparkles size={20} />
-        <h2>Upgrade recommendations</h2>
-      </div>
-      {recommendations.length === 0 ? (
-        <EmptyState message="Sync more battles to generate confident upgrade priorities." />
-      ) : (
-        <div className="recommendation-list">
-          {recommendations.slice(0, 5).map((item) => (
-            <div className="recommendation-row" key={item.brawlerName}>
-              <div>
-                <strong>{item.brawlerName}</strong>
-                <p>{item.reasons.join(" ")}</p>
-              </div>
-              <div className="score-stack">
-                <span>{Math.round(item.score)}</span>
-                <small>{item.confidence}</small>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </article>
-  );
-}
-
-function BrawlerPerformance({ brawlers }: { brawlers: BrawlerMetric[] }) {
-  return (
-    <article className="panel table-panel">
-      <div className="section-heading">
-        <Target size={20} />
-        <h2>Brawler performance</h2>
-      </div>
-      {brawlers.length === 0 ? (
-        <EmptyState message="Brawler win rates appear after the first sync." />
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Brawler</th>
-                <th>Role</th>
-                <th>Games</th>
-                <th>Win</th>
-                <th>Recent</th>
-                <th>Power</th>
-              </tr>
-            </thead>
-            <tbody>
-              {brawlers.slice(0, 8).map((item) => (
-                <tr key={item.brawlerName}>
-                  <td>{item.brawlerName}</td>
-                  <td>{item.role}</td>
-                  <td>{item.battles}</td>
-                  <td>{formatPercent(item.winRate)}</td>
-                  <td>{formatPercent(item.recentForm)}</td>
-                  <td>{item.currentPowerLevel ?? "?"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function ModeMapPerformance({ analysis }: { analysis: PlayerAnalysis | null }) {
-  return (
-    <article className="panel mode-panel">
-      <div className="section-heading">
-        <BarChart3 size={20} />
-        <h2>Mode / map performance</h2>
-      </div>
-      <div className="split-list">
-        <MetricList
-          icon={<Activity size={18} />}
-          title="Modes"
-          rows={analysis?.modes ?? []}
-        />
-        <MetricList
-          icon={<ShieldCheck size={18} />}
-          title="Maps"
-          rows={analysis?.maps ?? []}
-        />
-      </div>
-    </article>
-  );
-}
-
-function RecentBattles({
-  battles,
-  noteDrafts,
-  onNoteChange,
-  onTagToggle,
-  onSaveNote,
-}: {
-  battles: SavedBattle[];
-  noteDrafts: Record<string, ManualNote>;
-  onNoteChange: (battleId: string, note: string) => void;
-  onTagToggle: (battleId: string, tag: string) => void;
-  onSaveNote: (battle: SavedBattle) => void;
-}) {
-  return (
-    <section className="panel battle-panel">
-      <div className="section-heading">
-        <BookOpenText size={20} />
-        <h2>Recent battles</h2>
-      </div>
-      {battles.length === 0 ? (
-        <EmptyState message="No saved battles yet. Fetch the official battle log to persist matches before they disappear from the API." />
-      ) : (
-        <div className="table-wrap">
-          <table className="battle-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Mode</th>
-                <th>Map</th>
-                <th>Brawler</th>
-                <th>Result</th>
-                <th>Power</th>
-                <th>Trophies</th>
-                <th>Manual notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {battles.slice(0, 12).map((battle) => {
-                const draft = battle.id
-                  ? noteDrafts[battle.id] ?? { tags: [], note: "" }
-                  : { tags: [], note: "" };
-
-                return (
-                  <tr key={battle.id ?? battle.battleTime}>
-                    <td>{formatDate(battle.battleTime)}</td>
-                    <td>{battle.mode}</td>
-                    <td>{battle.map}</td>
-                    <td>{battle.playerBrawlerName}</td>
-                    <td>
-                      <span className={`result-pill ${battle.result.toLowerCase()}`}>
-                        {battle.result || "unknown"}
-                      </span>
-                    </td>
-                    <td>{battle.playerPowerLevel ?? "?"}</td>
-                    <td>
-                      {battle.trophyChange
-                        ? `${battle.trophyChange > 0 ? "+" : ""}${battle.trophyChange}`
-                        : "none"}
-                    </td>
-                    <td>
-                      {battle.id ? (
-                        <div className="note-editor compact">
-                          <div className="chip-row" aria-label="Manual tags">
-                            {MANUAL_TAGS.map((tag) => (
-                              <button
-                                type="button"
-                                className={
-                                  draft.tags.includes(tag)
-                                    ? "tag-chip selected"
-                                    : "tag-chip"
-                                }
-                                key={tag}
-                                onClick={() => onTagToggle(battle.id!, tag)}
-                              >
-                                {tag}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="note-actions">
-                            <textarea
-                              value={draft.note}
-                              onChange={(event) =>
-                                onNoteChange(battle.id!, event.target.value)
-                              }
-                              placeholder="Manual notes"
-                            />
-                            <button
-                              className="icon-button"
-                              onClick={() => onSaveNote(battle)}
-                            >
-                              <Save size={18} />
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        "Not saved"
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function MetricList({
-  icon,
-  title,
-  rows,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  rows: { key: string; battles: number; winRate: number }[];
-}) {
-  return (
-    <div className="rank-list">
-      <div className="rank-title">
-        {icon}
-        <strong>{title}</strong>
-      </div>
-      {rows.length === 0 ? (
-        <p className="muted">No data yet.</p>
-      ) : (
-        rows.slice(0, 5).map((row) => (
-          <div className="rank-row" key={row.key}>
-            <span>{row.key}</span>
-            <strong>{formatPercent(row.winRate)}</strong>
-            <small>{row.battles} games</small>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
-
-function EmptyState({ message }: { message: string }) {
-  return <p className="empty-state">{message}</p>;
 }

@@ -1,4 +1,5 @@
 export type Confidence = "Low" | "Medium" | "High";
+export type PlaystyleArchetype = "Control" | "Aggro" | "Support" | "Damage" | "Tank" | "Flex";
 
 export type PlayerSummary = {
   tag: string;
@@ -52,6 +53,7 @@ export type BrawlerMetric = {
   survivalScore: number;
   modeSpread: number;
   role: string;
+  archetype: PlaystyleArchetype;
   teammateDependency: string;
   counterNotes: string[];
   currentPowerLevel?: number | null;
