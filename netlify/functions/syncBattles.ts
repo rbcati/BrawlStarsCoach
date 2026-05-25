@@ -1,0 +1,139 @@
+import type { Config, Context } from "@netlify/functions";
+import { buildAnalysis } from "./_shared/analysis";
+import {
+  getOfficialBattleLog,
+  getOfficialPlayer,
+  normalizePlayerTag,
+} from "./_shared/brawlStars";
+import { handleError, json, methodNotAllowed, readJson } from "./_shared/http";
+import {
+  normalizeBattle,
+  toBrawlerSnapshots,
+  toPlayerSummary,
+} from "./_shared/normalize";
+import { getServiceSupabase } from "./_shared/supabase";
+
+type SyncBody = {
+  playerTag?: string;
+};
+
+export default async (req: Request, _context: Context) => {
+  if (req.method !== "POST") return methodNotAllowed(req.method);
+
+  try {
+    const body = await readJson<SyncBody>(req);
+    const playerTag = normalizePlayerTag(body.playerTag ?? "");
+    const supabase = getServiceSupabase();
+    const [player, battleLog] = await Promise.all([
+      getOfficialPlayer(playerTag),
+      getOfficialBattleLog(playerTag),
+    ]);
+
+    const normalized = battleLog.items
+      .map((item) => normalizeBattle(item, playerTag))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    const dedupeKeys = normalized.map((battle) => battle.dedupe_key);
+    const existingKeys = new Set<string>();
+
+    if (dedupeKeys.length) {
+      const { data: existing, error } = await supabase
+        .from("battles")
+        .select("dedupe_key")
+        .in("dedupe_key", dedupeKeys);
+
+      if (error) throw error;
+      existing?.forEach((row) => existingKeys.add(row.dedupe_key));
+    }
+
+    const { error: playerError } = await supabase
+      .from("players")
+      .upsert(toPlayerSummary(player), { onConflict: "tag" });
+
+    if (playerError) throw playerError;
+
+    const snapshots = toBrawlerSnapshots(player);
+    if (snapshots.length) {
+      const { error: snapshotError } = await supabase
+        .from("brawler_snapshots")
+        .upsert(snapshots, { onConflict: "player_tag,brawler_id" });
+
+      if (snapshotError) throw snapshotError;
+    }
+
+    const battleRows = normalized.map((battle) => ({
+      player_tag: playerTag,
+      battle_time: battle.battle_time,
+      mode: battle.mode,
+      map: battle.map,
+      result: battle.result,
+      duration: battle.duration,
+      trophy_change: battle.trophy_change,
+      star_player_tag: battle.star_player_tag,
+      player_brawler_id: battle.player_brawler_id,
+      player_brawler_name: battle.player_brawler_name,
+      player_power_level: battle.player_power_level,
+      teams_hash: battle.teams_hash,
+      dedupe_key: battle.dedupe_key,
+      raw: battle.raw,
+    }));
+
+    let savedCount = 0;
+
+    if (battleRows.length) {
+      const { data: savedBattles, error: battleError } = await supabase
+        .from("battles")
+        .upsert(battleRows, { onConflict: "dedupe_key" })
+        .select("id,dedupe_key");
+
+      if (battleError) throw battleError;
+
+      const battleIdByKey = new Map(
+        (savedBattles ?? []).map((row) => [row.dedupe_key, row.id]),
+      );
+      const participantRows = normalized.flatMap((battle) => {
+        const battleId = battleIdByKey.get(battle.dedupe_key);
+        if (!battleId) return [];
+        return battle.participants.map((participant) => ({
+          battle_id: battleId,
+          ...participant,
+        }));
+      });
+
+      if (savedBattles?.length) {
+        const ids = savedBattles.map((battle) => battle.id);
+        const { error: deleteError } = await supabase
+          .from("battle_players")
+          .delete()
+          .in("battle_id", ids);
+        if (deleteError) throw deleteError;
+      }
+
+      if (participantRows.length) {
+        const { error: participantError } = await supabase
+          .from("battle_players")
+          .insert(participantRows);
+        if (participantError) throw participantError;
+      }
+
+      savedCount = dedupeKeys.filter((key) => !existingKeys.has(key)).length;
+    }
+
+    const analysis = await buildAnalysis(supabase, playerTag);
+
+    return json({
+      player: analysis.player,
+      fetchedCount: battleLog.items.length,
+      savedCount,
+      skippedCount: Math.max(0, normalized.length - savedCount),
+      analysis,
+    });
+  } catch (error) {
+    return handleError(error);
+  }
+};
+
+export const config: Config = {
+  path: "/api/syncBattles",
+  method: ["POST"],
+};
