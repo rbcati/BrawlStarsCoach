@@ -29,6 +29,8 @@ const MANUAL_TAGS = [
   "teammates weak",
 ];
 
+const DEFAULT_PLAYER_TAG = "GQ0GRPCVQ";
+
 function formatPercent(value = 0) {
   return `${Math.round(value * 100)}%`;
 }
@@ -45,13 +47,13 @@ function formatDate(value: string) {
 }
 
 function normalizeTagInput(tag: string) {
-  const trimmed = tag.trim().toUpperCase();
+  const trimmed = (tag.trim() || DEFAULT_PLAYER_TAG).toUpperCase();
   if (!trimmed) return "";
   return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
 }
 
 export default function App() {
-  const [playerTag, setPlayerTag] = useState("");
+  const [playerTag, setPlayerTag] = useState(DEFAULT_PLAYER_TAG);
   const [autoSave, setAutoSave] = useState(false);
   const [analysis, setAnalysis] = useState<PlayerAnalysis | null>(null);
   const [status, setStatus] = useState("Enter a player tag to start coaching.");
@@ -362,67 +364,88 @@ function RecentBattles({
       {battles.length === 0 ? (
         <EmptyState message="No saved battles yet. Fetch the official battle log to persist matches before they disappear from the API." />
       ) : (
-        <div className="battle-list">
-          {battles.slice(0, 12).map((battle) => {
-            const draft = battle.id
-              ? noteDrafts[battle.id] ?? { tags: [], note: "" }
-              : { tags: [], note: "" };
+        <div className="table-wrap">
+          <table className="battle-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Mode</th>
+                <th>Map</th>
+                <th>Brawler</th>
+                <th>Result</th>
+                <th>Power</th>
+                <th>Trophies</th>
+                <th>Manual notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {battles.slice(0, 12).map((battle) => {
+                const draft = battle.id
+                  ? noteDrafts[battle.id] ?? { tags: [], note: "" }
+                  : { tags: [], note: "" };
 
-            return (
-              <article className="battle-row" key={battle.id ?? battle.battleTime}>
-                <div className="battle-main">
-                  <span className={`result-pill ${battle.result.toLowerCase()}`}>
-                    {battle.result || "unknown"}
-                  </span>
-                  <div>
-                    <strong>{battle.playerBrawlerName}</strong>
-                    <p>
-                      {battle.mode} on {battle.map} · {formatDate(battle.battleTime)}
-                    </p>
-                  </div>
-                </div>
-                <div className="battle-meta">
-                  <span>Power {battle.playerPowerLevel ?? "?"}</span>
-                  <span>{battle.trophyChange ? `${battle.trophyChange} trophies` : "No trophy delta"}</span>
-                  <span>
-                    Star player:{" "}
-                    {battle.starPlayerTag ? battle.starPlayerTag : "not listed"}
-                  </span>
-                </div>
-                {battle.id ? (
-                  <div className="note-editor">
-                    <div className="chip-row" aria-label="Manual tags">
-                      {MANUAL_TAGS.map((tag) => (
-                        <button
-                          type="button"
-                          className={
-                            draft.tags.includes(tag) ? "tag-chip selected" : "tag-chip"
-                          }
-                          key={tag}
-                          onClick={() => onTagToggle(battle.id!, tag)}
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="note-actions">
-                      <textarea
-                        value={draft.note}
-                        onChange={(event) =>
-                          onNoteChange(battle.id!, event.target.value)
-                        }
-                        placeholder="Manual notes"
-                      />
-                      <button className="icon-button" onClick={() => onSaveNote(battle)}>
-                        <Save size={18} />
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
+                return (
+                  <tr key={battle.id ?? battle.battleTime}>
+                    <td>{formatDate(battle.battleTime)}</td>
+                    <td>{battle.mode}</td>
+                    <td>{battle.map}</td>
+                    <td>{battle.playerBrawlerName}</td>
+                    <td>
+                      <span className={`result-pill ${battle.result.toLowerCase()}`}>
+                        {battle.result || "unknown"}
+                      </span>
+                    </td>
+                    <td>{battle.playerPowerLevel ?? "?"}</td>
+                    <td>
+                      {battle.trophyChange
+                        ? `${battle.trophyChange > 0 ? "+" : ""}${battle.trophyChange}`
+                        : "none"}
+                    </td>
+                    <td>
+                      {battle.id ? (
+                        <div className="note-editor compact">
+                          <div className="chip-row" aria-label="Manual tags">
+                            {MANUAL_TAGS.map((tag) => (
+                              <button
+                                type="button"
+                                className={
+                                  draft.tags.includes(tag)
+                                    ? "tag-chip selected"
+                                    : "tag-chip"
+                                }
+                                key={tag}
+                                onClick={() => onTagToggle(battle.id!, tag)}
+                              >
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="note-actions">
+                            <textarea
+                              value={draft.note}
+                              onChange={(event) =>
+                                onNoteChange(battle.id!, event.target.value)
+                              }
+                              placeholder="Manual notes"
+                            />
+                            <button
+                              className="icon-button"
+                              onClick={() => onSaveNote(battle)}
+                            >
+                              <Save size={18} />
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        "Not saved"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </section>

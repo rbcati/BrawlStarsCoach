@@ -7,11 +7,12 @@ The app keeps the official Brawl Stars API token on the server, persists every s
 ## Features
 
 - Player tag input and `Fetch Latest Battles` sync workflow.
-- Netlify Functions for `getPlayer`, `getBattleLog`, `syncBattles`, and `analyzePlayer`.
+- Defaults to `GQ0GRPCVQ` when the tag input is empty.
+- Netlify Functions for `get-player`, `get-battlelog`, and `sync-battles`.
 - Battle persistence with deduplication by player tag, battle time, mode, map, and normalized teams.
 - Dashboard sections for player overview, recent battles, brawler performance, mode/map performance, upgrade recommendations, and manual match notes.
 - Manual battle tags: `bad draft`, `carried`, `countered`, `felt controlled`, `tilted`, `teammates weak`.
-- Auto-save toggle that calls `syncBattles` every 5 minutes while the app is open.
+- Auto-sync toggle that calls `sync-battles` every 5 minutes while the app is open.
 - Error handling for invalid tags, API denial, rate limits, and missing environment variables.
 
 ## Setup
@@ -23,6 +24,14 @@ The app keeps the official Brawl Stars API token on the server, persists every s
    ```
 
 2. Create a Supabase project and run `supabase/schema.sql` in the SQL editor.
+
+   The schema creates:
+   - `players`
+   - `battles`
+   - `battle_participants`
+   - `manual_match_notes`
+   - `brawler_snapshots`
+   - `recommendations`
 
 3. Create `.env` from `.env.example`:
 
@@ -51,13 +60,20 @@ The app keeps the official Brawl Stars API token on the server, persists every s
    - `SUPABASE_SERVICE_ROLE_KEY`
 3. Deploy with the included `netlify.toml`.
 
+Netlify settings:
+
+- Build command: `npm run build`
+- Publish directory: `dist`
+
 ## API Routes
 
-- `GET /api/getPlayer?tag=#PLAYER`
-- `GET /api/getBattleLog?tag=#PLAYER`
-- `POST /api/syncBattles` with `{ "playerTag": "#PLAYER" }`
-- `GET /api/analyzePlayer?tag=#PLAYER`
-- `POST /api/saveBattleNote` with `{ "battleId": "...", "playerTag": "#PLAYER", "tags": [], "note": "" }`
+- `GET /api/get-player?tag=#PLAYER`
+- `GET /api/get-battlelog?tag=#PLAYER`
+- `POST /api/sync-battles` with `{ "tag": "#PLAYER" }`
+- `GET /api/analyze-player?tag=#PLAYER`
+- `POST /api/save-battle-note` with `{ "battleId": "...", "playerTag": "#PLAYER", "tags": [], "note": "" }`
+
+Only `get-player`, `get-battlelog`, and `sync-battles` are required for the MVP. The note and analysis endpoints support saved-history UX without exposing service credentials.
 
 ## Coaching Logic
 

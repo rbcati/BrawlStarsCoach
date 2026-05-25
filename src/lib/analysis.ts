@@ -1,0 +1,265 @@
+import type {
+  BrawlerMetric,
+  Confidence,
+  ModeMetric,
+  PlayerAnalysis,
+  PlayerSummary,
+  SavedBattle,
+  UpgradeRecommendation,
+} from "./types";
+
+type AnalysisInput = {
+  player: PlayerSummary;
+  battles: SavedBattle[];
+};
+
+const ROLE_BY_BRAWLER: Record<string, string> = {
+  SHELLY: "Tank counter",
+  COLT: "Damage dealer",
+  NITA: "Controller",
+  BULL: "Tank",
+  BROCK: "Marksman",
+  "EL PRIMO": "Tank",
+  BARLEY: "Thrower",
+  POCO: "Support",
+  ROSA: "Tank",
+  JESSIE: "Controller",
+  DYNAMIKE: "Thrower",
+  TICK: "Thrower",
+  "8-BIT": "Damage dealer",
+  RICO: "Damage dealer",
+  DARRYL: "Assassin",
+  PENNY: "Controller",
+  CARL: "Skirmisher",
+  JACKY: "Tank",
+  GUS: "Support",
+  BO: "Controller",
+  EMZ: "Controller",
+  STU: "Assassin",
+  PIPER: "Marksman",
+  PAM: "Support",
+  FRANK: "Tank",
+  BIBI: "Tank",
+  BEA: "Marksman",
+  NANI: "Marksman",
+  EDGAR: "Assassin",
+  GRIFF: "Damage dealer",
+  GROM: "Thrower",
+  BONNIE: "Marksman",
+  MORTIS: "Assassin",
+  TARA: "Controller",
+  GENE: "Support",
+  MAX: "Support",
+  "MR. P": "Controller",
+  SPROUT: "Thrower",
+  BYRON: "Support",
+  SQUEAK: "Controller",
+  GRAY: "Support",
+  SPIKE: "Controller",
+  CROW: "Assassin",
+  LEON: "Assassin",
+  SANDY: "Support",
+  AMBER: "Controller",
+  MEG: "Tank",
+  CHESTER: "Damage dealer",
+  SURGE: "Damage dealer",
+  COLETTE: "Tank counter",
+  LOU: "Controller",
+  BELLE: "Marksman",
+  BUZZ: "Assassin",
+  FANG: "Assassin",
+  EVE: "Controller",
+  JANET: "Marksman",
+  OTIS: "Controller",
+  SAM: "Tank",
+  BUSTER: "Tank",
+  MANDY: "Marksman",
+  MAISIE: "Damage dealer",
+  CORDELIUS: "Assassin",
+  CHUCK: "Controller",
+  CHARLIE: "Controller",
+  MICO: "Assassin",
+  KIT: "Support",
+  "LARRY & LAWRIE": "Thrower",
+  ANGELO: "Marksman",
+  MELODIE: "Assassin",
+  LILY: "Assassin",
+  BERRY: "Support",
+  CLANCY: "Damage dealer",
+  MOE: "Damage dealer",
+  KENJI: "Assassin",
+};
+
+export function calculatePlayerAnalysis({
+  player,
+  battles,
+}: AnalysisInput): PlayerAnalysis {
+  const sortedBattles = [...battles].sort(
+    (a, b) => new Date(b.battleTime).getTime() - new Date(a.battleTime).getTime(),
+  );
+  const brawlers = calculateBrawlerMetrics(sortedBattles, player.tag);
+  const recommendations = calculateUpgradeRecommendations(brawlers);
+  const wins = sortedBattles.filter(isWin).length;
+  const recent = sortedBattles.slice(0, 10);
+  const starPlayerWins = sortedBattles.filter(
+    (battle) => battle.starPlayerTag === player.tag,
+  ).length;
+
+  return {
+    player,
+    totals: {
+      battles: sortedBattles.length,
+      wins,
+      winRate: rate(wins, sortedBattles.length),
+      starPlayerRate: rate(starPlayerWins, sortedBattles.length),
+      recentForm: rate(recent.filter(isWin).length, recent.length),
+      versatilityScore: calculateVersatility(sortedBattles),
+    },
+    brawlers,
+    modes: calculateModePerformance(sortedBattles, (battle) => battle.mode),
+    maps: calculateModePerformance(sortedBattles, (battle) => battle.map),
+    recommendations,
+    battles: sortedBattles,
+  };
+}
+
+export function calculateBrawlerMetrics(
+  battles: SavedBattle[],
+  playerTag: string,
+): BrawlerMetric[] {
+  return Array.from(groupBy(battles, (battle) => battle.playerBrawlerName).entries())
+    .map(([brawlerName, rows]) => {
+      const wins = rows.filter(isWin).length;
+      const recent = rows.slice(0, 8);
+      const starPlayerCount = rows.filter(
+        (battle) => battle.starPlayerTag === playerTag,
+      ).length;
+      const modeSpread = new Set(rows.map((battle) => battle.mode)).size;
+      const enemyLosses = rows
+        .filter((battle) => !isWin(battle))
+        .flatMap((battle) => battle.enemies.map((enemy) => enemy.brawlerName));
+      const counterNotes = topCounts(enemyLosses)
+        .slice(0, 2)
+        .map(([enemy, count]) => `${enemy} appeared in ${count} loss${count === 1 ? "" : "es"}.`);
+      const teammateDependency =
+        wins === 0
+          ? "Unproven"
+          : starPlayerCount / wins > 0.55
+            ? "Carries wins"
+            : "Balanced";
+
+      return {
+        brawlerName,
+        battles: rows.length,
+        wins,
+        losses: rows.length - wins,
+        winRate: rate(wins, rows.length),
+        recentForm: rate(recent.filter(isWin).length, recent.length),
+        starPlayerRate: rate(starPlayerCount, rows.length),
+        survivalScore: calculateSurvivalProxy(rows),
+        modeSpread,
+        role: ROLE_BY_BRAWLER[brawlerName.toUpperCase()] ?? "Flex",
+        teammateDependency,
+        counterNotes,
+        currentPowerLevel: firstNumber(rows.map((battle) => battle.playerPowerLevel)),
+      };
+    })
+    .sort((a, b) => b.battles - a.battles || b.winRate - a.winRate);
+}
+
+export function calculateModePerformance(
+  battles: SavedBattle[],
+  getKey: (battle: SavedBattle) => string,
+): ModeMetric[] {
+  return Array.from(groupBy(battles, getKey).entries())
+    .map(([key, rows]) => {
+      const wins = rows.filter(isWin).length;
+      return { key, battles: rows.length, wins, winRate: rate(wins, rows.length) };
+    })
+    .sort((a, b) => b.battles - a.battles || b.winRate - a.winRate);
+}
+
+export function calculateUpgradeRecommendations(
+  metrics: BrawlerMetric[],
+): UpgradeRecommendation[] {
+  return metrics
+    .filter((metric) => metric.battles > 0)
+    .map((metric) => {
+      const samplePenalty = metric.battles < 5 ? metric.battles / 5 : 1;
+      const multiModeScore = Math.min(1, metric.modeSpread / 4);
+      const powerLevel = metric.currentPowerLevel ?? 11;
+      const upgradeUrgency = Math.max(0, 11 - powerLevel) / 10;
+      const score =
+        (metric.winRate * 35 +
+          multiModeScore * 18 +
+          metric.recentForm * 22 +
+          metric.starPlayerRate * 15 +
+          upgradeUrgency * 18) *
+        samplePenalty;
+      const confidence: Confidence =
+        metric.battles >= 12 ? "High" : metric.battles >= 5 ? "Medium" : "Low";
+      const reasons = [
+        `${metric.brawlerName} has a ${Math.round(metric.winRate * 100)}% win rate over ${metric.battles} saved match${metric.battles === 1 ? "" : "es"}.`,
+        `${metric.modeSpread > 1 ? "It is working across multiple modes" : "Mode coverage is still narrow"}.`,
+        `${metric.recentForm >= 0.55 ? "Recent results are trending up" : "Recent form needs more proof"}.`,
+        powerLevel < 10
+          ? `Power ${powerLevel} makes upgrades more urgent.`
+          : `Power ${powerLevel} is already high, so urgency is moderated.`,
+      ];
+
+      return {
+        brawlerName: metric.brawlerName,
+        score,
+        confidence,
+        currentPowerLevel: metric.currentPowerLevel,
+        sampleSize: metric.battles,
+        reasons,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+}
+
+function isWin(battle: SavedBattle) {
+  return ["victory", "win"].includes(battle.result.toLowerCase());
+}
+
+function calculateVersatility(battles: SavedBattle[]) {
+  const brawlers = new Set(battles.map((battle) => battle.playerBrawlerName)).size;
+  const modes = new Set(battles.map((battle) => battle.mode)).size;
+  return Math.min(100, brawlers * 9 + modes * 5);
+}
+
+function calculateSurvivalProxy(battles: SavedBattle[]) {
+  if (!battles.length) return 0;
+  const scores = battles.map((battle) => {
+    if (!battle.duration) return isWin(battle) ? 0.72 : 0.42;
+    const durationComponent = Math.min(1, battle.duration / 180);
+    return isWin(battle) ? 0.58 + durationComponent * 0.32 : 0.28 + durationComponent * 0.22;
+  });
+  return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+}
+
+function rate(numerator: number, denominator: number) {
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
+function groupBy<T>(rows: T[], getKey: (row: T) => string) {
+  const map = new Map<string, T[]>();
+  rows.forEach((row) => {
+    const key = getKey(row) || "Unknown";
+    map.set(key, [...(map.get(key) ?? []), row]);
+  });
+  return map;
+}
+
+function topCounts(values: string[]) {
+  const counts = new Map<string, number>();
+  values.forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1));
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+}
+
+function firstNumber(values: unknown[]) {
+  const value = values.find((item) => typeof item === "number");
+  return typeof value === "number" ? value : null;
+}

@@ -325,6 +325,11 @@ td {
   font-size: 0.9rem;
 }
 
+.battle-table th,
+.battle-table td {
+  vertical-align: top;
+}
+
 .mode-panel,
 .battle-panel {
   grid-column: 1 / -1;
@@ -421,6 +426,10 @@ td {
 .note-editor {
   display: grid;
   gap: 10px;
+}
+
+.note-editor.compact {
+  min-width: 420px;
 }
 
 .chip-row {

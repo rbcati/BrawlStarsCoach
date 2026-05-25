@@ -31,7 +31,7 @@ create table if not exists public.battles (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists public.battle_players (
+create table if not exists public.battle_participants (
   id uuid primary key default gen_random_uuid(),
   battle_id uuid not null references public.battles(id) on delete cascade,
   player_tag text not null,
@@ -92,11 +92,11 @@ create index if not exists battles_player_brawler_idx
 create index if not exists battles_player_mode_map_idx
   on public.battles(player_tag, mode, map);
 
-create index if not exists battle_players_battle_idx
-  on public.battle_players(battle_id);
+create index if not exists battle_participants_battle_idx
+  on public.battle_participants(battle_id);
 
-create index if not exists battle_players_player_idx
-  on public.battle_players(player_tag);
+create index if not exists battle_participants_player_idx
+  on public.battle_participants(player_tag);
 
 create index if not exists manual_match_notes_player_idx
   on public.manual_match_notes(player_tag);
@@ -106,7 +106,7 @@ create index if not exists recommendations_player_rank_idx
 
 alter table public.players enable row level security;
 alter table public.battles enable row level security;
-alter table public.battle_players enable row level security;
+alter table public.battle_participants enable row level security;
 alter table public.brawler_snapshots enable row level security;
 alter table public.manual_match_notes enable row level security;
 alter table public.recommendations enable row level security;

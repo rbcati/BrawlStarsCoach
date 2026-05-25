@@ -1,6 +1,8 @@
 import type { Config, Context } from "@netlify/functions";
-import { getOfficialPlayer, normalizePlayerTag } from "./_shared/brawlStars";
+import { buildAnalysis } from "./_shared/analysis";
+import { normalizePlayerTag } from "./_shared/brawlStars";
 import { handleError, json, methodNotAllowed } from "./_shared/http";
+import { getServiceSupabase } from "./_shared/supabase";
 
 export default async (req: Request, _context: Context) => {
   if (req.method !== "GET") return methodNotAllowed(req.method);
@@ -8,14 +10,15 @@ export default async (req: Request, _context: Context) => {
   try {
     const url = new URL(req.url);
     const tag = normalizePlayerTag(url.searchParams.get("tag") ?? "");
-    const player = await getOfficialPlayer(tag);
-    return json(player);
+    const supabase = getServiceSupabase();
+    const analysis = await buildAnalysis(supabase, tag);
+    return json(analysis);
   } catch (error) {
     return handleError(error);
   }
 };
 
 export const config: Config = {
-  path: "/api/getPlayer",
+  path: "/api/analyze-player",
   method: ["GET"],
 };

@@ -26,15 +26,15 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
 }
 
 export function syncBattles(playerTag: string) {
-  return request<SyncResponse>("/api/syncBattles", {
+  return request<SyncResponse>("/api/sync-battles", {
     method: "POST",
-    body: { playerTag },
+    body: { tag: playerTag },
   });
 }
 
 export function analyzePlayer(playerTag: string) {
   const tag = encodeURIComponent(playerTag.trim());
-  return request<PlayerAnalysis>(`/api/analyzePlayer?tag=${tag}`);
+  return request<PlayerAnalysis>(`/api/analyze-player?tag=${tag}`);
 }
 
 export function saveBattleNote(
@@ -42,7 +42,7 @@ export function saveBattleNote(
   playerTag: string,
   note: ManualNote,
 ) {
-  return request<{ note: ManualNote }>("/api/saveBattleNote", {
+  return request<{ note: ManualNote }>("/api/save-battle-note", {
     method: "POST",
     body: { battleId, playerTag, tags: note.tags, note: note.note },
   });

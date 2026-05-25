@@ -14,6 +14,7 @@ import {
 import { getServiceSupabase } from "./_shared/supabase";
 
 type SyncBody = {
+  tag?: string;
   playerTag?: string;
 };
 
@@ -22,7 +23,7 @@ export default async (req: Request, _context: Context) => {
 
   try {
     const body = await readJson<SyncBody>(req);
-    const playerTag = normalizePlayerTag(body.playerTag ?? "");
+    const playerTag = normalizePlayerTag(body.tag ?? body.playerTag ?? "");
     const supabase = getServiceSupabase();
     const [player, battleLog] = await Promise.all([
       getOfficialPlayer(playerTag),
@@ -32,7 +33,6 @@ export default async (req: Request, _context: Context) => {
     const normalized = battleLog.items
       .map((item) => normalizeBattle(item, playerTag))
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
-
     const dedupeKeys = normalized.map((battle) => battle.dedupe_key);
     const existingKeys = new Set<string>();
 
@@ -103,7 +103,7 @@ export default async (req: Request, _context: Context) => {
       if (savedBattles?.length) {
         const ids = savedBattles.map((battle) => battle.id);
         const { error: deleteError } = await supabase
-          .from("battle_players")
+          .from("battle_participants")
           .delete()
           .in("battle_id", ids);
         if (deleteError) throw deleteError;
@@ -111,7 +111,7 @@ export default async (req: Request, _context: Context) => {
 
       if (participantRows.length) {
         const { error: participantError } = await supabase
-          .from("battle_players")
+          .from("battle_participants")
           .insert(participantRows);
         if (participantError) throw participantError;
       }
@@ -134,6 +134,6 @@ export default async (req: Request, _context: Context) => {
 };
 
 export const config: Config = {
-  path: "/api/syncBattles",
+  path: "/api/sync-battles",
   method: ["POST"],
 };

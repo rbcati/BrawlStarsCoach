@@ -57,6 +57,6 @@ export default async (req: Request, _context: Context) => {
 };
 
 export const config: Config = {
-  path: "/api/saveBattleNote",
+  path: "/api/save-battle-note",
   method: ["POST"],
 };
