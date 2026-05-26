@@ -11,8 +11,3 @@
   to = "http://161.153.75.96:3001/api/:splat"
   status = 200
   force = true
-
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
