@@ -41,7 +41,7 @@ The app keeps the official Brawl Stars API token on the server, persists every s
    PORT=3001
    CORS_ORIGIN=https://your-netlify-site.netlify.app
    SUPABASE_URL=https://your-project.supabase.co
-   VITE_API_BASE_URL=http://161.153.75.96:3001
+   VITE_API_BASE_URL=/oracle-api
    VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
@@ -67,12 +67,12 @@ The app keeps the official Brawl Stars API token on the server, persists every s
 
 1. Create a Netlify site connected to this repo.
 2. Add these environment variables in Netlify:
-   - `VITE_API_BASE_URL=http://161.153.75.96:3001`
+   - `VITE_API_BASE_URL=/oracle-api`
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
 3. Deploy with the included `netlify.toml`.
 
-The Netlify frontend calls the Oracle VPS Express API for Brawl Stars data. Do not configure the frontend to call Netlify Functions for Brawl Stars requests.
+The Netlify frontend calls the same-origin `/oracle-api/*` proxy, and Netlify forwards those requests to the Oracle VPS Express API. Do not configure the browser to call the Oracle HTTP origin directly in production.
 
 Netlify settings:
 
@@ -84,17 +84,24 @@ Netlify settings:
 The deployed Netlify frontend must be configured with:
 
 ```bash
-VITE_API_BASE_URL=http://161.153.75.96:3001
+VITE_API_BASE_URL=/oracle-api
 ```
 
 Frontend Brawl Stars data requests use:
 
-- `GET ${VITE_API_BASE_URL}/api/player/:tag`
-- `GET ${VITE_API_BASE_URL}/api/battlelog/:tag`
-- `POST ${VITE_API_BASE_URL}/api/sync/:tag`
-- `GET ${VITE_API_BASE_URL}/api/analyze/:tag`
+- `GET /oracle-api/player/:tag`
+- `GET /oracle-api/battlelog/:tag`
+- `POST /oracle-api/sync/:tag`
+- `GET /oracle-api/analyze/:tag`
 
-The browser never calls the official Brawl Stars API directly and no longer calls Netlify Functions for Brawl Stars data.
+Netlify proxies those requests to the unchanged Oracle backend routes:
+
+- `GET http://161.153.75.96:3001/api/player/:tag`
+- `GET http://161.153.75.96:3001/api/battlelog/:tag`
+- `POST http://161.153.75.96:3001/api/sync/:tag`
+- `GET http://161.153.75.96:3001/api/analyze/:tag`
+
+The browser never calls the official Brawl Stars API directly and does not call the plain-HTTP Oracle origin directly from the deployed HTTPS site.
 
 ## Oracle VPS Deployment
 
@@ -152,7 +159,7 @@ The VPS backend is a standard Express server in `server/index.js`.
    pm2 startup
    ```
 
-7. Set `VITE_API_BASE_URL=http://161.153.75.96:3001` in Netlify so the deployed frontend calls the VPS backend instead of Netlify Functions.
+7. Set `VITE_API_BASE_URL=/oracle-api` in Netlify so the deployed frontend uses Netlify's same-origin proxy to reach the VPS backend.
 
 Oracle ports `22` and `3001` must be open in the subnet security list and instance firewall. The Brawl Stars API battlelog only returns recent battles, so keep syncing regularly if you want long-term history.
 

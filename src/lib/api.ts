@@ -1,6 +1,7 @@
 import type { ManualNote, PlayerAnalysis, SyncResponse } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const PROXY_API_PREFIX = "/oracle-api";
 
 type ApiOptions = {
   method?: "GET" | "POST";
@@ -9,7 +10,7 @@ type ApiOptions = {
 
 export const apiConfigError = API_BASE_URL
   ? null
-  : "VITE_API_BASE_URL is missing. Set it to the Oracle backend URL, for example http://161.153.75.96:3001.";
+  : "VITE_API_BASE_URL is missing. Set it to /oracle-api for Netlify deployments.";
 
 async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const response = await fetch(path, {
@@ -39,26 +40,37 @@ function requireApiBaseUrl() {
   return API_BASE_URL.replace(/\/+$/, "");
 }
 
+function oracleApiPath(path: string) {
+  const baseUrl = requireApiBaseUrl();
+  const apiPath = path.startsWith("/") ? path : `/${path}`;
+
+  if (baseUrl === PROXY_API_PREFIX) {
+    return `${baseUrl}${apiPath.replace(/^\/api(?=\/|$)/, "")}`;
+  }
+
+  return `${baseUrl}${apiPath}`;
+}
+
 function tagPath(playerTag: string) {
   return encodeURIComponent(playerTag.trim());
 }
 
 export function getPlayer(playerTag: string) {
-  return request(`${requireApiBaseUrl()}/api/player/${tagPath(playerTag)}`);
+  return request(oracleApiPath(`/api/player/${tagPath(playerTag)}`));
 }
 
 export function getBattleLog(playerTag: string) {
-  return request(`${requireApiBaseUrl()}/api/battlelog/${tagPath(playerTag)}`);
+  return request(oracleApiPath(`/api/battlelog/${tagPath(playerTag)}`));
 }
 
 export function syncBattles(playerTag: string) {
-  return request<SyncResponse>(`${requireApiBaseUrl()}/api/sync/${tagPath(playerTag)}`, {
+  return request<SyncResponse>(oracleApiPath(`/api/sync/${tagPath(playerTag)}`), {
     method: "POST",
   });
 }
 
 export function analyzePlayer(playerTag: string) {
-  return request<PlayerAnalysis>(`${requireApiBaseUrl()}/api/analyze/${tagPath(playerTag)}`);
+  return request<PlayerAnalysis>(oracleApiPath(`/api/analyze/${tagPath(playerTag)}`));
 }
 
 export function saveBattleNote(
