@@ -259,6 +259,13 @@ textarea:focus {
   gap: 16px;
 }
 
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
 .panel {
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -270,7 +277,8 @@ textarea:focus {
 .recommendations-panel,
 .mode-panel,
 .table-panel,
-.battle-panel {
+.battle-panel,
+.advanced-card {
   padding: 22px;
 }
 
@@ -448,6 +456,66 @@ td {
   margin-top: 16px;
 }
 
+.advanced-card.wide {
+  grid-column: 1 / -1;
+}
+
+.insight-stack,
+.insight-list {
+  display: grid;
+  gap: 12px;
+}
+
+.insight-title {
+  display: block;
+  color: var(--color-text);
+  font-size: 1.45rem;
+  line-height: 1.1;
+}
+
+.plain-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-utility);
+  line-height: 1.45;
+}
+
+.insight-row {
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: 12px;
+}
+
+.insight-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.insight-row strong {
+  color: var(--color-heading);
+}
+
+.insight-row span {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.insight-row p,
+.insight-stack p {
+  margin-bottom: 0;
+  color: var(--color-utility);
+  line-height: 1.45;
+}
+
+.limitations-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .battle-row {
   display: grid;
   gap: 12px;
@@ -562,6 +630,7 @@ textarea {
 @media (max-width: 960px) {
   .topbar,
   .dashboard-grid,
+  .advanced-grid,
   .split-list {
     grid-template-columns: 1fr;
   }
@@ -582,7 +651,8 @@ textarea {
   .recommendations-panel,
   .mode-panel,
   .table-panel,
-  .battle-panel {
+  .battle-panel,
+  .advanced-card {
     padding: 16px;
   }
 
@@ -601,6 +671,10 @@ textarea {
   .note-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .limitations-list {
+    grid-template-columns: 1fr;
   }
 
   .result-pill {

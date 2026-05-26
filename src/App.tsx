@@ -1,5 +1,6 @@
 import { Moon, RefreshCcw, Sun } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AdvancedAnalyticsCards } from "./components/AdvancedAnalyticsCards";
 import { BrawlerPerformance } from "./components/BrawlerPerformance";
 import { ModeMapPerformance } from "./components/ModeMapPerformance";
 import { Overview } from "./components/Overview";
@@ -212,6 +213,8 @@ export default function App() {
         <BrawlerPerformance brawlers={analysis?.brawlers ?? []} />
         <ModeMapPerformance analysis={analysis} />
       </section>
+
+      <AdvancedAnalyticsCards analysis={analysis} />
 
       <RecentBattles
         battles={analysis?.battles ?? []}

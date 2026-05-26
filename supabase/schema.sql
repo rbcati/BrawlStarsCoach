@@ -14,9 +14,11 @@ create table if not exists public.players (
 create table if not exists public.battles (
   id uuid primary key default gen_random_uuid(),
   player_tag text not null references public.players(tag) on delete cascade,
+  stable_battle_id text,
   battle_time timestamptz not null,
   mode text not null,
   map text not null,
+  battle_type text,
   result text not null,
   duration integer,
   trophy_change integer,
@@ -24,6 +26,13 @@ create table if not exists public.battles (
   player_brawler_id integer,
   player_brawler_name text not null,
   player_power_level integer,
+  target_team_index integer,
+  team_average_power numeric(6, 2),
+  enemy_average_power numeric(6, 2),
+  team_average_trophies numeric(8, 2),
+  enemy_average_trophies numeric(8, 2),
+  adjusted_difficulty_score numeric(6, 2),
+  enemy_comp_archetype text,
   teams_hash text not null,
   dedupe_key text not null unique,
   raw jsonb not null default '{}'::jsonb,
@@ -39,11 +48,35 @@ create table if not exists public.battle_participants (
   brawler_id integer,
   brawler_name text not null,
   brawler_power integer,
+  brawler_trophies integer,
   side text not null check (side in ('ally', 'enemy', 'solo')),
+  relationship text not null default 'opponent' check (relationship in ('target_player', 'teammate', 'opponent')),
+  team_index integer,
   is_player boolean not null default false,
   is_star_player boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.battles
+  add column if not exists stable_battle_id text,
+  add column if not exists battle_type text,
+  add column if not exists target_team_index integer,
+  add column if not exists team_average_power numeric(6, 2),
+  add column if not exists enemy_average_power numeric(6, 2),
+  add column if not exists team_average_trophies numeric(8, 2),
+  add column if not exists enemy_average_trophies numeric(8, 2),
+  add column if not exists adjusted_difficulty_score numeric(6, 2),
+  add column if not exists enemy_comp_archetype text;
+
+alter table public.battle_participants
+  add column if not exists brawler_trophies integer,
+  add column if not exists relationship text not null default 'opponent',
+  add column if not exists team_index integer;
+
+alter table public.battle_participants
+  drop constraint if exists battle_participants_relationship_check,
+  add constraint battle_participants_relationship_check
+    check (relationship in ('target_player', 'teammate', 'opponent'));
 
 create table if not exists public.brawler_snapshots (
   id uuid primary key default gen_random_uuid(),
@@ -74,17 +107,31 @@ create table if not exists public.recommendations (
   player_tag text not null references public.players(tag) on delete cascade,
   brawler_name text not null,
   score numeric(8, 3) not null,
-  confidence text not null check (confidence in ('Low', 'Medium', 'High')),
+  confidence text not null check (confidence in ('low', 'medium', 'high')),
   explanation text not null,
   rank integer not null,
   created_at timestamptz not null default now()
 );
+
+alter table public.recommendations
+  drop constraint if exists recommendations_confidence_check;
+
+update public.recommendations
+set confidence = lower(confidence)
+where confidence in ('Low', 'Medium', 'High');
+
+alter table public.recommendations
+  add constraint recommendations_confidence_check
+    check (confidence in ('low', 'medium', 'high'));
 
 create index if not exists players_last_synced_idx
   on public.players(last_synced_at desc);
 
 create index if not exists battles_player_time_idx
   on public.battles(player_tag, battle_time desc);
+
+create index if not exists battles_stable_battle_idx
+  on public.battles(stable_battle_id);
 
 create index if not exists battles_player_brawler_idx
   on public.battles(player_tag, player_brawler_name);
@@ -97,6 +144,9 @@ create index if not exists battle_participants_battle_idx
 
 create index if not exists battle_participants_player_idx
   on public.battle_participants(player_tag);
+
+create index if not exists battle_participants_relationship_idx
+  on public.battle_participants(relationship);
 
 create index if not exists manual_match_notes_player_idx
   on public.manual_match_notes(player_tag);
@@ -112,7 +162,13 @@ alter table public.manual_match_notes enable row level security;
 alter table public.recommendations enable row level security;
 
 comment on table public.battles is
-  'Persisted official Brawl Stars battle log rows. Dedupe key is player tag + battleTime + mode + map + normalized teams.';
+  'Persisted official Brawl Stars battle log rows. Stable battle ID is battleTime + mode + map + sorted player tags/brawler IDs; dedupe key is player tag + stable battle ID.';
+
+comment on column public.battle_participants.relationship is
+  'Target-relative role derived from the official battlelog: target_player, teammate, or opponent.';
+
+comment on column public.battles.adjusted_difficulty_score is
+  'Inferred from available brawler power and trophy differences only; it is not a measure of lane matchup, kills, deaths, or damage.';
 
 comment on column public.manual_match_notes.tags is
   'Manual coaching tags such as bad draft, carried, countered, felt controlled, tilted, teammates weak.';

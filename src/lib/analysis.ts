@@ -1,11 +1,20 @@
 import type {
+  AdvancedAnalytics,
   BrawlerMetric,
   Confidence,
+  EnemyCompArchetypeMetric,
+  EnemyMatchupMetric,
+  MapModeBrawlerMetric,
+  MapModeWarning,
   ModeMetric,
   PlayerAnalysis,
   PlayerSummary,
   PlaystyleArchetype,
+  RecentTrendSummary,
   SavedBattle,
+  StarPlayerRateMetric,
+  TeammateBrawlerSynergyMetric,
+  TeammatePlayerSynergyMetric,
   UpgradeRecommendation,
 } from "./types";
 
@@ -130,6 +139,7 @@ export function calculatePlayerAnalysis({
     modes: calculateModePerformance(sortedBattles, (battle) => battle.mode),
     maps: calculateModePerformance(sortedBattles, (battle) => battle.map),
     recommendations,
+    advanced: calculateAdvancedAnalytics(sortedBattles, brawlers),
     battles: sortedBattles,
   };
 }
@@ -180,6 +190,345 @@ export function calculateBrawlerMetrics(
     .sort((a, b) => b.battles - a.battles || b.winRate - a.winRate);
 }
 
+export function calculateAdvancedAnalytics(
+  battles: SavedBattle[],
+  brawlers = calculateBrawlerMetrics(battles, ""),
+): AdvancedAnalytics {
+  const enemyMatchups = calculateEnemyMatchups(battles);
+  const teammatePairings = calculateTeammateBrawlerSynergy(battles);
+  const teammatePlayerSynergies = calculateTeammatePlayerSynergy(battles);
+  const mapModeBrawlerPerformance = calculateMapModeBrawlerPerformance(battles);
+  const starPlayerRates = calculateStarPlayerRates(battles);
+  const enemyCompArchetypePerformance = calculateEnemyCompArchetypePerformance(battles);
+  const mapModeWarnings = mapModeBrawlerPerformance
+    .filter((metric) => metric.matches >= 3 && metric.winRate < 0.45)
+    .sort((a, b) => a.winRate - b.winRate || b.matches - a.matches)
+    .slice(0, 4)
+    .map<MapModeWarning>((metric) => ({
+      mode: metric.mode,
+      map: metric.map,
+      brawlerName: metric.brawlerName,
+      matches: metric.matches,
+      winRate: metric.winRate,
+      confidence: metric.confidence,
+      warning: `${metric.brawlerName} is underperforming on ${metric.map} ${metric.mode} in saved matches.`,
+    }));
+
+  return {
+    bestCurrentBrawlerFit: calculateBestCurrentBrawlerFit(brawlers, battles),
+    worstEnemyMatchups: enemyMatchups
+      .filter((metric) => metric.matches >= 2)
+      .sort((a, b) => a.winRate - b.winRate || b.matches - a.matches)
+      .slice(0, 5),
+    bestTeammatePairings: teammatePairings
+      .filter((metric) => metric.matches >= 2)
+      .sort((a, b) => b.winRate - a.winRate || b.matches - a.matches)
+      .slice(0, 5),
+    teammatePlayerSynergies: teammatePlayerSynergies.slice(0, 5),
+    mapModeBrawlerPerformance,
+    mapModeWarnings,
+    enemyCompArchetypePerformance,
+    starPlayerRates,
+    recentTrendSummary: calculateRecentTrendSummary(battles),
+    lowSampleSizeWarnings: buildLowSampleSizeWarnings({
+      enemyMatchups,
+      teammatePairings,
+      mapModeWarnings,
+      totalMatches: battles.length,
+    }),
+    limitations: [
+      "Battlelog history is limited by what has been synced before official matches roll off.",
+      "Matchups are enemy team appearance trends, not confirmed lane matchups or exact 1v1 outcomes.",
+      "Difficulty is inferred only from available brawler power and trophy differences.",
+      "The official battlelog does not include kills, deaths, damage, draft order, lane assignment, or positioning.",
+    ],
+  };
+}
+
+export function calculateEnemyMatchups(battles: SavedBattle[]): EnemyMatchupMetric[] {
+  return aggregateBattleAppearances(
+    battles.flatMap((battle) =>
+      battle.enemies.map((enemy) => ({
+        battle,
+        key: `${battle.playerBrawlerName}|${enemy.brawlerName}`,
+        userBrawlerName: battle.playerBrawlerName,
+        enemyBrawlerName: enemy.brawlerName,
+      })),
+    ),
+  ).map(({ rows, userBrawlerName, enemyBrawlerName }) => {
+    const wins = rows.filter(({ battle }) => isWin(battle)).length;
+    const trophyChanges = rows
+      .map(({ battle }) => battle.trophyChange)
+      .filter((value): value is number => typeof value === "number");
+    const matches = rows.length;
+
+    return {
+      userBrawlerName,
+      enemyBrawlerName,
+      matches,
+      wins,
+      losses: matches - wins,
+      winRate: rate(wins, matches),
+      confidence: getConfidenceLabel(matches),
+      averageTrophyChange: trophyChanges.length
+        ? trophyChanges.reduce((sum, value) => sum + value, 0) / trophyChanges.length
+        : null,
+      adjustedDifficultyScore: averageDifficulty(rows.map(({ battle }) => battle)),
+      label: "Enemy team appearance matchup",
+      inferred: true,
+    };
+  });
+}
+
+export function calculateTeammateBrawlerSynergy(
+  battles: SavedBattle[],
+): TeammateBrawlerSynergyMetric[] {
+  return aggregateBattleAppearances(
+    battles.flatMap((battle) =>
+      battle.teammates.map((teammate) => ({
+        battle,
+        key: `${battle.playerBrawlerName}|${teammate.brawlerName}`,
+        userBrawlerName: battle.playerBrawlerName,
+        teammateBrawlerName: teammate.brawlerName,
+      })),
+    ),
+  ).map(({ rows, userBrawlerName, teammateBrawlerName }) => {
+    const wins = rows.filter(({ battle }) => isWin(battle)).length;
+    const matches = rows.length;
+
+    return {
+      userBrawlerName,
+      teammateBrawlerName,
+      matches,
+      wins,
+      winRate: rate(wins, matches),
+      confidence: getConfidenceLabel(matches),
+      adjustedDifficultyScore: averageDifficulty(rows.map(({ battle }) => battle)),
+      label: "Teammate brawler appearance synergy",
+      inferred: true,
+    };
+  });
+}
+
+export function calculateTeammatePlayerSynergy(
+  battles: SavedBattle[],
+): TeammatePlayerSynergyMetric[] {
+  return aggregateBattleAppearances(
+    battles.flatMap((battle) =>
+      battle.teammates.map((teammate) => ({
+        battle,
+        key: teammate.tag,
+        teammateTag: teammate.tag,
+        teammateName: teammate.name,
+        pairLabel: `${battle.playerBrawlerName} + ${teammate.brawlerName}`,
+      })),
+    ),
+  )
+    .map(({ rows, teammateTag, teammateName }) => {
+      const wins = rows.filter(({ battle }) => isWin(battle)).length;
+      const matches = rows.length;
+      const bestBrawlerPair = topCounts(rows.map((row) => row.pairLabel))[0]?.[0];
+
+      return {
+        teammateTag,
+        teammateName,
+        matches,
+        wins,
+        winRate: rate(wins, matches),
+        confidence: getConfidenceLabel(matches),
+        bestBrawlerPair,
+        label: "Specific teammate tag synergy",
+        inferred: true as const,
+      };
+    })
+    .sort((a, b) => b.winRate - a.winRate || b.matches - a.matches);
+}
+
+function calculateMapModeBrawlerPerformance(
+  battles: SavedBattle[],
+): MapModeBrawlerMetric[] {
+  return Array.from(
+    groupBy(
+      battles,
+      (battle) => `${battle.mode}|${battle.map}|${battle.playerBrawlerName}`,
+    ).entries(),
+  )
+    .map(([key, rows]) => {
+      const [mode, map, brawlerName] = key.split("|");
+      const wins = rows.filter(isWin).length;
+
+      return {
+        mode,
+        map,
+        brawlerName,
+        matches: rows.length,
+        wins,
+        winRate: rate(wins, rows.length),
+        confidence: getConfidenceLabel(rows.length),
+        adjustedDifficultyScore: averageDifficulty(rows),
+      };
+    })
+    .sort((a, b) => b.matches - a.matches || b.winRate - a.winRate);
+}
+
+function calculateEnemyCompArchetypePerformance(
+  battles: SavedBattle[],
+): EnemyCompArchetypeMetric[] {
+  return Array.from(
+    groupBy(battles, (battle) => battle.enemyCompArchetype ?? "Unknown enemy comp").entries(),
+  )
+    .map(([archetype, rows]) => {
+      const wins = rows.filter(isWin).length;
+      return {
+        archetype,
+        matches: rows.length,
+        wins,
+        winRate: rate(wins, rows.length),
+        confidence: getConfidenceLabel(rows.length),
+        label: "Enemy comp archetype performance",
+        inferred: true as const,
+      };
+    })
+    .sort((a, b) => b.matches - a.matches || a.winRate - b.winRate);
+}
+
+function calculateStarPlayerRates(battles: SavedBattle[]): StarPlayerRateMetric[] {
+  return Array.from(
+    groupBy(battles, (battle) => `${battle.playerBrawlerName}|${battle.mode}`).entries(),
+  )
+    .map(([key, rows]) => {
+      const [brawlerName, mode] = key.split("|");
+      const starPlayerMatches = rows.filter((battle) => {
+        const targetTag = battle.targetPlayer?.tag;
+        return Boolean(targetTag && battle.starPlayerTag === targetTag);
+      }).length;
+
+      return {
+        brawlerName,
+        mode,
+        matches: rows.length,
+        starPlayerMatches,
+        starPlayerRate: rate(starPlayerMatches, rows.length),
+        confidence: getConfidenceLabel(rows.length),
+      };
+    })
+    .sort((a, b) => b.starPlayerRate - a.starPlayerRate || b.matches - a.matches);
+}
+
+function calculateBestCurrentBrawlerFit(
+  brawlers: BrawlerMetric[],
+  battles: SavedBattle[],
+) {
+  const recentBattles = battles.slice(0, 12);
+  const recentByBrawler = groupBy(recentBattles, (battle) => battle.playerBrawlerName);
+  const candidate = brawlers
+    .map((metric) => {
+      const recentRows = recentByBrawler.get(metric.brawlerName) ?? [];
+      const recentWinRate = rate(recentRows.filter(isWin).length, recentRows.length);
+      const difficulty =
+        averageDifficulty(battles.filter((battle) => battle.playerBrawlerName === metric.brawlerName)) /
+        100;
+      const score =
+        metric.winRate * 44 +
+        metric.recentForm * 28 +
+        metric.starPlayerRate * 14 +
+        Math.max(0, difficulty) * 8 +
+        Math.min(1, metric.modeSpread / 4) * 6;
+
+      return {
+        brawlerName: metric.brawlerName,
+        score,
+        confidence: getConfidenceLabel(metric.battles),
+        reasons: [
+          `${Math.round(metric.winRate * 100)}% saved win rate over ${metric.battles} match${metric.battles === 1 ? "" : "es"}.`,
+          recentRows.length
+            ? `${Math.round(recentWinRate * 100)}% recent win rate in the latest ${recentRows.length} appearance${recentRows.length === 1 ? "" : "s"}.`
+            : "No very recent appearance in the latest saved matches.",
+          `Star player rate is ${Math.round(metric.starPlayerRate * 100)}% when available.`,
+        ],
+      };
+    })
+    .sort((a, b) => b.score - a.score)[0];
+
+  return candidate ?? null;
+}
+
+function calculateRecentTrendSummary(battles: SavedBattle[]): RecentTrendSummary {
+  const recent = battles.slice(0, 10);
+  const previous = battles.slice(10, 20);
+  const recentWinRate = rate(recent.filter(isWin).length, recent.length);
+  const previousWinRate = previous.length ? rate(previous.filter(isWin).length, previous.length) : null;
+  const delta = previousWinRate === null ? null : recentWinRate - previousWinRate;
+
+  return {
+    matches: recent.length,
+    winRate: recentWinRate,
+    previousWinRate,
+    delta,
+    label:
+      delta === null
+        ? "Need more saved matches for a trend comparison."
+        : delta >= 0.12
+          ? "Recent results are improving."
+          : delta <= -0.12
+            ? "Recent results are cooling off."
+            : "Recent results are roughly stable.",
+    confidence: getConfidenceLabel(recent.length),
+  };
+}
+
+function buildLowSampleSizeWarnings({
+  enemyMatchups,
+  teammatePairings,
+  mapModeWarnings,
+  totalMatches,
+}: {
+  enemyMatchups: EnemyMatchupMetric[];
+  teammatePairings: TeammateBrawlerSynergyMetric[];
+  mapModeWarnings: MapModeWarning[];
+  totalMatches: number;
+}) {
+  const warnings = [];
+  if (totalMatches < 15) {
+    warnings.push({
+      metric: "Overall analysis",
+      matches: totalMatches,
+      message: "High-confidence reads need at least 15 saved matches.",
+    });
+  }
+
+  const lowEnemy = enemyMatchups.filter((metric) => metric.matches < 5).length;
+  if (lowEnemy) {
+    warnings.push({
+      metric: "Enemy appearance matchups",
+      matches: lowEnemy,
+      message: `${lowEnemy} enemy matchup trend${lowEnemy === 1 ? " is" : "s are"} still low sample.`,
+    });
+  }
+
+  const lowPairings = teammatePairings.filter((metric) => metric.matches < 5).length;
+  if (lowPairings) {
+    warnings.push({
+      metric: "Teammate pairings",
+      matches: lowPairings,
+      message: `${lowPairings} teammate pairing trend${lowPairings === 1 ? " is" : "s are"} still low sample.`,
+    });
+  }
+
+  mapModeWarnings
+    .filter((warning) => warning.matches < 5)
+    .slice(0, 2)
+    .forEach((warning) =>
+      warnings.push({
+        metric: `${warning.brawlerName} on ${warning.map}`,
+        matches: warning.matches,
+        message: "Treat this map/mode warning as directional until more matches are saved.",
+      }),
+    );
+
+  return warnings.slice(0, 5);
+}
+
 export function calculateModePerformance(
   battles: SavedBattle[],
   getKey: (battle: SavedBattle) => string,
@@ -209,8 +558,7 @@ export function calculateUpgradeRecommendations(
           metric.starPlayerRate * 15 +
           upgradeUrgency * 18) *
         samplePenalty;
-      const confidence: Confidence =
-        metric.battles >= 12 ? "High" : metric.battles >= 5 ? "Medium" : "Low";
+      const confidence = getConfidenceLabel(metric.battles);
       const reasons = [
         `${metric.brawlerName} has a ${Math.round(metric.winRate * 100)}% win rate over ${metric.battles} saved match${metric.battles === 1 ? "" : "es"}.`,
         `${metric.modeSpread > 1 ? "It is working across multiple modes" : "Mode coverage is still narrow"}.`,
@@ -231,6 +579,12 @@ export function calculateUpgradeRecommendations(
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, 10);
+}
+
+export function getConfidenceLabel(matches: number): Confidence {
+  if (matches >= 15) return "high";
+  if (matches >= 5) return "medium";
+  return "low";
 }
 
 function isWin(battle: SavedBattle) {
@@ -264,6 +618,23 @@ function groupBy<T>(rows: T[], getKey: (row: T) => string) {
     map.set(key, [...(map.get(key) ?? []), row]);
   });
   return map;
+}
+
+function aggregateBattleAppearances<
+  T extends { battle: SavedBattle; key: string },
+>(rows: T[]) {
+  return Array.from(groupBy(rows, (row) => row.key).values()).map((groupedRows) => ({
+    ...groupedRows[0],
+    rows: groupedRows,
+  }));
+}
+
+function averageDifficulty(battles: SavedBattle[]) {
+  const values = battles
+    .map((battle) => battle.adjustedDifficultyScore)
+    .filter((value): value is number => typeof value === "number");
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function topCounts(values: string[]) {
