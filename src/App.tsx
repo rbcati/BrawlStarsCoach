@@ -5,7 +5,7 @@ import { ModeMapPerformance } from "./components/ModeMapPerformance";
 import { Overview } from "./components/Overview";
 import { RecentBattles } from "./components/RecentBattles";
 import { UpgradeRecommendations } from "./components/UpgradeRecommendations";
-import { analyzePlayer, saveBattleNote, syncBattles } from "./lib/api";
+import { analyzePlayer, apiConfigError, saveBattleNote, syncBattles } from "./lib/api";
 import type { ManualNote, PlayerAnalysis, SavedBattle } from "./lib/types";
 
 const DEFAULT_PLAYER_TAG = "GQ0GRPCVQ";
@@ -33,8 +33,10 @@ export default function App() {
   const [playerTag, setPlayerTag] = useState(DEFAULT_PLAYER_TAG);
   const [autoSave, setAutoSave] = useState(false);
   const [analysis, setAnalysis] = useState<PlayerAnalysis | null>(null);
-  const [status, setStatus] = useState("Enter a player tag to start coaching.");
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState(
+    apiConfigError ?? "Enter a player tag to start coaching.",
+  );
+  const [error, setError] = useState<string | null>(apiConfigError);
   const [isSyncing, setIsSyncing] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, ManualNote>>({});
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
@@ -61,6 +63,12 @@ export default function App() {
 
   const fetchAndSync = useCallback(
     async (source: "manual" | "auto" = "manual") => {
+      if (apiConfigError) {
+        setError(apiConfigError);
+        setStatus(apiConfigError);
+        return;
+      }
+
       if (syncInFlightRef.current) {
         if (source === "manual") {
           setStatus("A sync is already running. Finishing that one first.");

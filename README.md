@@ -8,11 +8,11 @@ The app keeps the official Brawl Stars API token on the server, persists every s
 
 - Player tag input and `Fetch Latest Battles` sync workflow.
 - Defaults to `GQ0GRPCVQ` when the tag input is empty.
-- Netlify Functions for `get-player`, `get-battlelog`, and `sync-battles`.
+- Oracle VPS Express API integration for player lookup, battlelog, sync, and analysis.
 - Battle persistence with deduplication by player tag, battle time, mode, map, and normalized teams.
 - Dashboard sections for player overview, recent battles, brawler performance, mode/map performance, upgrade recommendations, and manual match notes.
 - Manual battle tags: `bad draft`, `carried`, `countered`, `felt controlled`, `tilted`, `teammates weak`.
-- Auto-sync toggle that calls `sync-battles` every 5 minutes while the app is open.
+- Auto-sync toggle that calls the VPS `/api/sync/:tag` route every 5 minutes while the app is open.
 - Error handling for invalid tags, API denial, rate limits, and missing environment variables.
 - Express backend for VPS deployment with `/health`, `/api/player/:tag`, `/api/battlelog/:tag`, `/api/sync/:tag`, and `/api/analyze/:tag`.
 
@@ -41,6 +41,7 @@ The app keeps the official Brawl Stars API token on the server, persists every s
    PORT=3001
    CORS_ORIGIN=https://your-netlify-site.netlify.app
    SUPABASE_URL=https://your-project.supabase.co
+   VITE_API_BASE_URL=http://161.153.75.96:3001
    VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
@@ -66,26 +67,34 @@ The app keeps the official Brawl Stars API token on the server, persists every s
 
 1. Create a Netlify site connected to this repo.
 2. Add these environment variables in Netlify:
-   - `BRAWL_STARS_API_TOKEN`
+   - `VITE_API_BASE_URL=http://161.153.75.96:3001`
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY`
 3. Deploy with the included `netlify.toml`.
+
+The Netlify frontend calls the Oracle VPS Express API for Brawl Stars data. Do not configure the frontend to call Netlify Functions for Brawl Stars requests.
 
 Netlify settings:
 
 - Build command: `npm run build`
 - Publish directory: `dist`
 
-## API Routes
+## Frontend API Configuration
 
-- `GET /api/get-player?tag=#PLAYER`
-- `GET /api/get-battlelog?tag=#PLAYER`
-- `POST /api/sync-battles` with `{ "tag": "#PLAYER" }`
-- `GET /api/analyze-player?tag=#PLAYER`
-- `POST /api/save-battle-note` with `{ "battleId": "...", "playerTag": "#PLAYER", "tags": [], "note": "" }`
+The deployed Netlify frontend must be configured with:
 
-Only `get-player`, `get-battlelog`, and `sync-battles` are required for the MVP. The note and analysis endpoints support saved-history UX without exposing service credentials.
+```bash
+VITE_API_BASE_URL=http://161.153.75.96:3001
+```
+
+Frontend Brawl Stars data requests use:
+
+- `GET ${VITE_API_BASE_URL}/api/player/:tag`
+- `GET ${VITE_API_BASE_URL}/api/battlelog/:tag`
+- `POST ${VITE_API_BASE_URL}/api/sync/:tag`
+- `GET ${VITE_API_BASE_URL}/api/analyze/:tag`
+
+The browser never calls the official Brawl Stars API directly and no longer calls Netlify Functions for Brawl Stars data.
 
 ## Oracle VPS Deployment
 
@@ -143,7 +152,7 @@ The VPS backend is a standard Express server in `server/index.js`.
    pm2 startup
    ```
 
-7. Point the Netlify frontend at the VPS API from client code or an API base URL env var when you are ready to use the VPS backend instead of Netlify Functions.
+7. Set `VITE_API_BASE_URL=http://161.153.75.96:3001` in Netlify so the deployed frontend calls the VPS backend instead of Netlify Functions.
 
 Oracle ports `22` and `3001` must be open in the subnet security list and instance firewall. The Brawl Stars API battlelog only returns recent battles, so keep syncing regularly if you want long-term history.
 
